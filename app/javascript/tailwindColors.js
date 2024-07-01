@@ -3,21 +3,6 @@
  * Stimulus controllers to reference our color palette.  Mostly used for D3 charts.
  */
 
-export const categoryColors = [
-   "#e99537",
-   "#4da568",
-   "#6471eb",
-   "#db5a54",
-   "#df4e92",
-   "#c44fe9",
-   "#eb5429",
-   "#61c9ea",
-   "#805dee",
-   "#6ad28a"
-]
-
-export const categoryDefaultColor = "#737373"
-
 export default {
   transparent: "transparent",
   current: "currentColor",
@@ -53,17 +38,17 @@ export default {
     900: "rgba(255, 255, 255, 0.7)",
   },
   "alpha-black": {
-    25: "rgba(20, 20, 20, 0.03)",
-    50: "rgba(20, 20, 20, 0.05)",
-    100: "rgba(20, 20, 20, 0.08)",
-    200: "rgba(20, 20, 20, 0.1)",
-    300: "rgba(20, 20, 20, 0.15)",
-    400: "rgba(20, 20, 20, 0.2)",
-    500: "rgba(20, 20, 20, 0.3)",
-    600: "rgba(20, 20, 20, 0.4)",
-    700: "rgba(20, 20, 20, 0.5)",
-    800: "rgba(20, 20, 20, 0.6)",
-    900: "rgba(20, 20, 20, 0.7)",
+    25: "rgba(11, 11, 11, 0.03)",
+    50: "rgba(11, 11, 11, 0.05)",
+    100: "rgba(11, 11, 11, 0.08)",
+    200: "rgba(11, 11, 11, 0.1)",
+    300: "rgba(11, 11, 11, 0.15)",
+    400: "rgba(11, 11, 11, 0.2)",
+    500: "rgba(11, 11, 11, 0.3)",
+    600: "rgba(11, 11, 11, 0.4)",
+    700: "rgba(11, 11, 11, 0.5)",
+    800: "rgba(11, 11, 11, 0.6)",
+    900: "rgba(11, 11, 11, 0.7)",
   },
   red: {
     25: "#FFFBFB",

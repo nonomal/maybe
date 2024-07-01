@@ -26,6 +26,10 @@ class Money::Currency
             @all ||= YAML.load_file(CURRENCIES_FILE_PATH)
         end
 
+        def all_instances
+            all.values.map { |currency_data| new(currency_data["iso_code"]) }
+        end
+
         def popular
             all.values.sort_by { |currency| currency["priority"] }.first(12).map { |currency_data| new(currency_data["iso_code"]) }
         end
@@ -52,6 +56,10 @@ class Money::Currency
         @delimiter = currency_data["delimiter"]
         @default_format = currency_data["default_format"]
         @default_precision = currency_data["default_precision"]
+    end
+
+    def step
+      (1.0/10**default_precision)
     end
 
     def <=>(other)

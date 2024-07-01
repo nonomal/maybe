@@ -1,108 +1,115 @@
 class Account::Balance::Calculator
-    attr_reader :daily_balances, :errors, :warnings
+  attr_reader :errors, :warnings
 
-    @daily_balances = []
+  def initialize(account, options = {})
     @errors = []
     @warnings = []
+    @account = account
+    @calc_start_date = calculate_sync_start(options[:calc_start_date])
+  end
 
-    def initialize(account, options = {})
-      @account = account
-      @calc_start_date = [ options[:calc_start_date], @account.effective_start_date ].compact.max
+  def daily_balances
+    @daily_balances ||= calculate_daily_balances
+  end
+
+  private
+
+    attr_reader :calc_start_date, :account
+
+    def calculate_sync_start(provided_start_date = nil)
+      if account.balances.any?
+        [ provided_start_date, account.effective_start_date ].compact.max
+      else
+        account.effective_start_date
+      end
     end
 
-    def calculate
-      prior_balance = implied_start_balance
+    def calculate_daily_balances
+      prior_balance = nil
 
-      calculated_balances = ((@calc_start_date + 1.day)...Date.current).map do |date|
-        valuation = normalized_valuations.find { |v| v["date"] == date }
+      calculated_balances = (calc_start_date..Date.current).map do |date|
+        valuation_entry = find_valuation_entry(date)
 
-        if valuation
-          current_balance = valuation["value"]
+        if valuation_entry
+          current_balance = valuation_entry.amount
+        elsif prior_balance.nil?
+          current_balance = implied_start_balance
         else
-          txn_flows = transaction_flows(date)
+          txn_entries = syncable_transaction_entries.select { |e| e.date == date }
+          txn_flows = transaction_flows(txn_entries)
           current_balance = prior_balance - txn_flows
         end
 
         prior_balance = current_balance
 
-        { date: date, balance: current_balance, currency: @account.currency, updated_at: Time.current }
+        { date:, balance: current_balance, currency: account.currency, updated_at: Time.current }
       end
 
-      @daily_balances = [
-        { date: @calc_start_date, balance: implied_start_balance, currency: @account.currency, updated_at: Time.current },
-        *calculated_balances,
-        { date: Date.current, balance: @account.balance, currency: @account.currency, updated_at: Time.current } # Last balance must always match "source of truth"
-      ]
-
-      if @account.foreign_currency?
-        converted_balances = convert_balances_to_family_currency
-        @daily_balances.concat(converted_balances)
+      if account.foreign_currency?
+        calculated_balances.concat(convert_balances_to_family_currency(calculated_balances))
       end
 
-      self
+      calculated_balances
     end
 
-    private
-      def convert_balances_to_family_currency
-        rates = ExchangeRate.get_rate_series(
-          @account.currency,
-          @account.family.currency,
-          @calc_start_date..Date.current
-        ).to_a
+    def syncable_entries
+      @entries ||= account.entries.where("date >= ?", calc_start_date).to_a
+    end
 
-        @daily_balances.map do |balance|
-          rate = rates.find { |rate| rate.date == balance[:date] }
-          raise "Rate for #{@account.currency} to #{@account.family.currency} on #{balance[:date]} not found" if rate.nil?
-          converted_balance = balance[:balance] * rate.rate
-          { date: balance[:date], balance: converted_balance, currency: @account.family.currency, updated_at: Time.current }
-        end
+    def syncable_transaction_entries
+      @syncable_transaction_entries ||= syncable_entries.select { |e| e.account_transaction? }
+    end
+
+    def find_valuation_entry(date)
+      syncable_entries.find { |entry| entry.date == date && entry.account_valuation? }
+    end
+
+    def transaction_flows(transaction_entries)
+      converted_entries = transaction_entries.map { |entry| convert_entry_to_account_currency(entry) }.compact
+      flows = converted_entries.sum(&:amount)
+      flows *= -1 if account.liability?
+      flows
+    end
+
+    def convert_balances_to_family_currency(balances)
+      rates = ExchangeRate.get_rates(
+        account.currency,
+        account.family.currency,
+        calc_start_date..Date.current
+      ).to_a
+
+      # Abort conversion if some required rates are missing
+      if rates.length != balances.length
+        @errors << :sync_message_missing_rates
+        return []
       end
 
-      # For calculation, all transactions and valuations need to be normalized to the same currency (the account's primary currency)
-      def normalize_entries_to_account_currency(entries, value_key)
-        entries.map do |entry|
-          currency = entry.currency
-          date = entry.date
-          value = entry.send(value_key)
+      balances.map.with_index do |balance, index|
+        converted_balance = balance[:balance] * rates[index].rate
+        { date: balance[:date], balance: converted_balance, currency: account.family.currency, updated_at: Time.current }
+      end
+    end
 
-          if currency != @account.currency
-            rate = ExchangeRate.find_by(base_currency: currency, converted_currency: @account.currency, date: date)
-            raise "Rate for #{currency} to #{@account.currency} not found" unless rate
+    # Multi-currency accounts have transactions in many currencies
+    def convert_entry_to_account_currency(entry)
+      return entry if entry.currency == account.currency
 
-            value *= rate.rate
-            currency = @account.currency
-          end
+      converted_entry = entry.dup
 
-          entry.attributes.merge(value_key.to_s => value, "currency" => currency)
-        end
+      rate = ExchangeRate.find_rate(from: entry.currency, to: account.currency, date: entry.date)
+
+      unless rate
+        @errors << :sync_message_missing_rates
+        return nil
       end
 
-      def normalized_valuations
-        @normalized_valuations ||= normalize_entries_to_account_currency(@account.valuations.where("date >= ?", @calc_start_date).order(:date).select(:date, :value, :currency), :value)
-      end
+      converted_entry.currency = account.currency
+      converted_entry.amount = entry.amount * rate.rate
+      converted_entry
+    end
 
-      def normalized_transactions
-        @normalized_transactions ||= normalize_entries_to_account_currency(@account.transactions.where("date >= ?", @calc_start_date).order(:date).select(:date, :amount, :currency), :amount)
-      end
-
-      def transaction_flows(date)
-        flows = normalized_transactions.select { |t| t["date"] == date }.sum { |t| t["amount"] }
-        flows *= -1 if @account.classification == "liability"
-        flows
-      end
-
-      def implied_start_balance
-        oldest_valuation_date = normalized_valuations.first&.dig("date")
-        oldest_transaction_date = normalized_transactions.first&.dig("date")
-        oldest_entry_date = [ oldest_valuation_date, oldest_transaction_date ].compact.min
-
-        if oldest_entry_date == oldest_valuation_date
-          oldest_valuation = normalized_valuations.find { |v| v["date"] == oldest_valuation_date }
-          oldest_valuation["value"].to_d
-        else
-          net_transaction_flows = normalized_transactions.sum { |t| t["amount"].to_d }
-          net_transaction_flows *= -1 if @account.classification == "liability"
-          @account.balance.to_d + net_transaction_flows
-        end
-      end
+    def implied_start_balance
+      transaction_entries = syncable_transaction_entries.select { |e| e.date > calc_start_date }
+      account.balance.to_d + transaction_flows(transaction_entries)
+    end
 end

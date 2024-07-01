@@ -1,48 +1,121 @@
 class TimeSeries::Trend
-  attr_reader :type
+  include ActiveModel::Validations
 
-  # Tells us whether an increasing/decreasing trend is good or bad (i.e. a liability decreasing is good)
-  TYPES = %i[normal inverse].freeze
+  attr_reader :current, :previous, :favorable_direction
 
-  def initialize(current: nil, previous: nil, type: :normal)
-    validate_data_types(current, previous)
-    validate_type(type)
+  validate :values_must_be_of_same_type, :values_must_be_of_known_type
+
+  def initialize(current:, previous:, series: nil, favorable_direction: nil)
     @current = current
     @previous = previous
-    @type = type
+    @series = series
+    @favorable_direction = get_favorable_direction(favorable_direction)
+
+    validate!
   end
 
   def direction
-    return "flat" if @previous.nil? || @current == @previous
-    return "up" if @current && @current > @previous
-    "down"
+    if previous.nil? || current == previous
+      "flat"
+    elsif current && current > previous
+      "up"
+    else
+      "down"
+    end.inquiry
+  end
+
+  def color
+    case direction
+    when "up"
+      favorable_direction.down? ? red_hex : green_hex
+    when "down"
+      favorable_direction.down? ? green_hex : red_hex
+    else
+      gray_hex
+    end
   end
 
   def value
-    return Money.new(0) if @previous.nil? && @current.is_a?(Money)
-    return 0 if @previous.nil?
-    @current - @previous
+    if previous.nil?
+      current.is_a?(Money) ? Money.new(0) : 0
+    else
+      current - previous
+    end
   end
 
   def percent
-    return 0.0 if @previous.nil?
-    return Float::INFINITY if @previous == 0
-    ((extract_numeric(@current) - extract_numeric(@previous)).abs / extract_numeric(@previous).abs.to_f * 100).round(1).to_f
+    if previous.nil?
+      0.0
+    elsif previous.zero?
+      Float::INFINITY
+    else
+      change = (current_amount - previous_amount)
+      base = previous_amount.to_f
+
+      (change / base * 100).round(1).to_f
+    end
+  end
+
+  def as_json
+    {
+      favorable_direction: favorable_direction,
+      direction: direction,
+      value: value,
+      percent: percent
+    }.as_json
   end
 
   private
-    def validate_type(type)
-      raise ArgumentError, "Invalid type" unless TYPES.include?(type)
+
+    attr_reader :series
+
+    def red_hex
+      "#F13636" # red-500
     end
 
-    def validate_data_types(current, previous)
-      return if previous.nil? || current.nil?
-      raise ArgumentError, "Current and previous values must be of the same type" unless current.class == previous.class
-      raise ArgumentError, "Current and previous values must be of type Money or Numeric" unless current.is_a?(Money) || current.is_a?(Numeric)
+    def green_hex
+      "#10A861" # green-600
+    end
+
+    def gray_hex
+      "#737373" # gray-500
+    end
+
+    def values_must_be_of_same_type
+      unless current.class == previous.class || [ previous, current ].any?(&:nil?)
+        errors.add :current, "must be of the same type as previous"
+        errors.add :previous, "must be of the same type as current"
+      end
+    end
+
+    def values_must_be_of_known_type
+      unless current.is_a?(Money) || current.is_a?(Numeric) || current.nil?
+        errors.add :current, "must be of type Money, Numeric, or nil"
+      end
+
+      unless previous.is_a?(Money) || previous.is_a?(Numeric) || previous.nil?
+        errors.add :previous, "must be of type Money, Numeric, or nil"
+      end
+    end
+
+    def current_amount
+      extract_numeric current
+    end
+
+    def previous_amount
+      extract_numeric previous
     end
 
     def extract_numeric(obj)
-      return obj.amount if obj.is_a? Money
-      obj
+      if obj.is_a? Money
+        obj.amount
+      else
+        obj
+      end
+    end
+
+    def get_favorable_direction(favorable_direction)
+      direction = favorable_direction.presence || series&.favorable_direction
+      (direction.presence_in(TimeSeries::DIRECTIONS) || "up").inquiry
     end
 end

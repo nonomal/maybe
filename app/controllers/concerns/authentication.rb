@@ -2,7 +2,15 @@ module Authentication
   extend ActiveSupport::Concern
 
   included do
-    helper_method :user_signed_in?
+    before_action :authenticate_user!
+    after_action :set_last_login_at, if: -> { Current.user }
+  end
+
+  class_methods do
+    def skip_authentication(**options)
+      skip_before_action :authenticate_user!, **options
+      skip_after_action :set_last_login_at, **options
+    end
   end
 
   private
@@ -15,10 +23,6 @@ module Authentication
     end
   end
 
-  def user_signed_in?
-    Current.user.present?
-  end
-
   def login(user)
     Current.user = user
     reset_session
@@ -28,5 +32,9 @@ module Authentication
   def logout
     Current.user = nil
     reset_session
+  end
+
+  def set_last_login_at
+    Current.user.update(last_login_at: DateTime.now)
   end
 end

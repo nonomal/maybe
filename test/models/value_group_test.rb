@@ -1,9 +1,9 @@
 require "test_helper"
-
+require "ostruct"
 class ValueGroupTest < ActiveSupport::TestCase
     setup do
         checking = accounts(:checking)
-        savings = accounts(:savings_with_valuation_overrides)
+        savings = accounts(:savings)
         collectable = accounts(:collectable)
 
         # Level 1

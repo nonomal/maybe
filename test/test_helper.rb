@@ -1,4 +1,21 @@
+if ENV["COVERAGE"]
+  require "simplecov"
+  SimpleCov.start "rails" do
+    enable_coverage :branch
+  end
+end
+
+# Test ENV setup:
+# By default, all features should be disabled
+# Use the `with_env_overrides` helper to enable features for individual tests
+ENV["SELF_HOSTING_ENABLED"] = "false"
+ENV["UPGRADES_ENABLED"] = "false"
 ENV["RAILS_ENV"] ||= "test"
+
+# Fixes Segfaults on M1 Macs when running tests in parallel (temporary workaround)
+# https://github.com/ged/ruby-pg/issues/538#issuecomment-1591629049
+ENV["PGGSSENCMODE"] = "disable"
+
 require_relative "../config/environment"
 require "rails/test_help"
 require "minitest/mock"
@@ -16,7 +33,18 @@ end
 module ActiveSupport
   class TestCase
     # Run tests in parallel with specified workers
-    parallelize(workers: :number_of_processors)
+    parallelize(workers: :number_of_processors) unless ENV["DISABLE_PARALLELIZATION"]
+
+    # https://github.com/simplecov-ruby/simplecov/issues/718#issuecomment-538201587
+    if ENV["COVERAGE"]
+      parallelize_setup do |worker|
+        SimpleCov.command_name "#{SimpleCov.command_name}-#{worker}"
+      end
+
+      parallelize_teardown do |worker|
+        SimpleCov.result
+      end
+    end
 
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all
@@ -24,6 +52,15 @@ module ActiveSupport
     # Add more helper methods to be used by all tests here...
     def sign_in(user)
       post session_path, params: { email: user.email, password: "password" }
+    end
+
+    def with_env_overrides(overrides = {}, &block)
+      ClimateControl.modify(**overrides, &block)
+    end
+
+    def with_self_hosting
+      Rails.configuration.stubs(:app_mode).returns("self_hosted".inquiry)
+      yield
     end
   end
 end

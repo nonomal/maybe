@@ -1,8 +1,10 @@
 class RegistrationsController < ApplicationController
+  skip_authentication
+
   layout "auth"
 
   before_action :set_user, only: :create
-  before_action :claim_invite_code, only: :create, if: :hosted_app?
+  before_action :claim_invite_code, only: :create, if: :invite_code_required?
 
   def new
     @user = User.new
@@ -11,9 +13,10 @@ class RegistrationsController < ApplicationController
   def create
     family = Family.new
     @user.family = family
+    @user.role = :admin
 
     if @user.save
-      Transaction::Category.create_default_categories(@user.family)
+      Category.create_default_categories(@user.family)
       login @user
       flash[:notice] = t(".success")
       redirect_to root_path

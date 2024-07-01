@@ -38,13 +38,25 @@ Rails.application.configure do
 
   # Don't care if the mailer can't send.
   config.action_mailer.raise_delivery_errors = false
+  config.action_mailer.delivery_method = :letter_opener
+
+  # Uncomment to send emails in development
+  # config.action_mailer.raise_delivery_errors = true
+  # config.action_mailer.delivery_method = :smtp
+  # config.action_mailer.smtp_settings = {
+  #   address: ENV["SMTP_ADDRESS"],
+  #   port: ENV["SMTP_PORT"],
+  #   user_name: ENV["SMTP_USERNAME"],
+  #   password: ENV["SMTP_PASSWORD"],
+  #   tls: ENV.fetch("SMTP_TLS_ENABLED", "true") == "true"
+  # }
+
 
   config.action_mailer.perform_caching = false
 
-  config.action_mailer.delivery_method = :letter_opener
   config.action_mailer.perform_deliveries = true
 
-  config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
+  config.action_mailer.default_url_options = { host: "localhost", port: ENV.fetch("PORT") { 3000 } }
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
@@ -63,10 +75,6 @@ Rails.application.configure do
 
   # Highlight code that enqueued background job in logs.
   config.active_job.verbose_enqueue_logs = true
-
-  # Set Active Job queue adapter
-  config.active_job.queue_adapter = :good_job
-
 
   # Raises error for missing translations.
   # config.i18n.raise_on_missing_translations = true

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
+ActiveRecord::Schema[7.2].define(version: 2024_06_28_104551) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -18,6 +18,8 @@ ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
   # Custom types defined in this database.
   # Note that some types may not work with other database engines. Be careful if changing database.
   create_enum "account_status", ["ok", "syncing", "error"]
+  create_enum "import_status", ["pending", "importing", "complete", "failed"]
+  create_enum "user_role", ["admin", "member"]
 
   create_table "account_balances", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.uuid "account_id", null: false
@@ -30,47 +32,39 @@ ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
     t.index ["account_id"], name: "index_account_balances_on_account_id"
   end
 
-  create_table "account_credits", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+  create_table "account_entries", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "account_id", null: false
+    t.string "entryable_type"
+    t.uuid "entryable_id"
+    t.decimal "amount", precision: 19, scale: 4
+    t.string "currency"
+    t.date "date"
+    t.string "name"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.uuid "transfer_id"
+    t.boolean "marked_as_transfer", default: false, null: false
+    t.index ["account_id"], name: "index_account_entries_on_account_id"
+    t.index ["transfer_id"], name: "index_account_entries_on_transfer_id"
+  end
+
+  create_table "account_transactions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.uuid "category_id"
+    t.boolean "excluded", default: false
+    t.text "notes"
+    t.uuid "merchant_id"
+    t.index ["category_id"], name: "index_account_transactions_on_category_id"
+    t.index ["merchant_id"], name: "index_account_transactions_on_merchant_id"
+  end
+
+  create_table "account_transfers", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
   end
 
-  create_table "account_cryptos", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_depositories", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_investments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_loans", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_other_assets", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_other_liabilities", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_properties", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-  end
-
-  create_table "account_vehicles", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+  create_table "account_valuations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
   end
@@ -85,13 +79,69 @@ ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
     t.uuid "accountable_id"
     t.decimal "balance", precision: 19, scale: 4, default: "0.0"
     t.string "currency", default: "USD"
-    t.virtual "classification", type: :string, as: "\nCASE\n    WHEN ((accountable_type)::text = ANY ((ARRAY['Account::Loan'::character varying, 'Account::Credit'::character varying, 'Account::OtherLiability'::character varying])::text[])) THEN 'liability'::text\n    ELSE 'asset'::text\nEND", stored: true
     t.boolean "is_active", default: true, null: false
     t.enum "status", default: "ok", null: false, enum_type: "account_status"
-    t.jsonb "sync_warnings", default: "[]", null: false
-    t.jsonb "sync_errors", default: "[]", null: false
+    t.jsonb "sync_warnings", default: [], null: false
+    t.jsonb "sync_errors", default: [], null: false
+    t.date "last_sync_date"
+    t.uuid "institution_id"
+    t.virtual "classification", type: :string, as: "\nCASE\n    WHEN ((accountable_type)::text = ANY (ARRAY[('Loan'::character varying)::text, ('CreditCard'::character varying)::text, ('OtherLiability'::character varying)::text])) THEN 'liability'::text\n    ELSE 'asset'::text\nEND", stored: true
     t.index ["accountable_type"], name: "index_accounts_on_accountable_type"
     t.index ["family_id"], name: "index_accounts_on_family_id"
+    t.index ["institution_id"], name: "index_accounts_on_institution_id"
+  end
+
+  create_table "active_storage_attachments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "name", null: false
+    t.string "record_type", null: false
+    t.uuid "record_id", null: false
+    t.uuid "blob_id", null: false
+    t.datetime "created_at", null: false
+    t.index ["blob_id"], name: "index_active_storage_attachments_on_blob_id"
+    t.index ["record_type", "record_id", "name", "blob_id"], name: "index_active_storage_attachments_uniqueness", unique: true
+  end
+
+  create_table "active_storage_blobs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "key", null: false
+    t.string "filename", null: false
+    t.string "content_type"
+    t.text "metadata"
+    t.string "service_name", null: false
+    t.bigint "byte_size", null: false
+    t.string "checksum"
+    t.datetime "created_at", null: false
+    t.index ["key"], name: "index_active_storage_blobs_on_key", unique: true
+  end
+
+  create_table "active_storage_variant_records", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "blob_id", null: false
+    t.string "variation_digest", null: false
+    t.index ["blob_id", "variation_digest"], name: "index_active_storage_variant_records_uniqueness", unique: true
+  end
+
+  create_table "categories", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "name", null: false
+    t.string "color", default: "#6172F3", null: false
+    t.string "internal_category"
+    t.uuid "family_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["family_id"], name: "index_categories_on_family_id"
+  end
+
+  create_table "credit_cards", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "cryptos", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "depositories", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "exchange_rates", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -192,6 +242,31 @@ ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
     t.index ["scheduled_at"], name: "index_good_jobs_on_scheduled_at", where: "(finished_at IS NULL)"
   end
 
+  create_table "imports", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "account_id", null: false
+    t.jsonb "column_mappings"
+    t.enum "status", default: "pending", enum_type: "import_status"
+    t.string "raw_csv_str"
+    t.string "normalized_csv_str"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_imports_on_account_id"
+  end
+
+  create_table "institutions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "name", null: false
+    t.string "logo_url"
+    t.uuid "family_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["family_id"], name: "index_institutions_on_family_id"
+  end
+
+  create_table "investments", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
   create_table "invite_codes", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.string "token", null: false
     t.datetime "created_at", null: false
@@ -199,29 +274,60 @@ ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
     t.index ["token"], name: "index_invite_codes_on_token", unique: true
   end
 
-  create_table "transaction_categories", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+  create_table "loans", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "merchants", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.string "name", null: false
-    t.string "color", default: "#6172F3", null: false
-    t.string "internal_category"
+    t.string "color", default: "#e99537", null: false
     t.uuid "family_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["family_id"], name: "index_transaction_categories_on_family_id"
+    t.index ["family_id"], name: "index_merchants_on_family_id"
   end
 
-  create_table "transactions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.string "name"
-    t.date "date", null: false
-    t.decimal "amount", precision: 19, scale: 4, null: false
-    t.string "currency", default: "USD", null: false
-    t.uuid "account_id", null: false
+  create_table "other_assets", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.uuid "category_id"
-    t.boolean "excluded", default: false
-    t.text "notes"
-    t.index ["account_id"], name: "index_transactions_on_account_id"
-    t.index ["category_id"], name: "index_transactions_on_category_id"
+  end
+
+  create_table "other_liabilities", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "properties", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "settings", force: :cascade do |t|
+    t.string "var", null: false
+    t.text "value"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["var"], name: "index_settings_on_var", unique: true
+  end
+
+  create_table "taggings", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "tag_id", null: false
+    t.string "taggable_type"
+    t.uuid "taggable_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["tag_id"], name: "index_taggings_on_tag_id"
+    t.index ["taggable_type", "taggable_id"], name: "index_taggings_on_taggable"
+  end
+
+  create_table "tags", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "name"
+    t.string "color", default: "#e99537", null: false
+    t.uuid "family_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["family_id"], name: "index_tags_on_family_id"
   end
 
   create_table "users", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -232,26 +338,34 @@ ActiveRecord::Schema[7.2].define(version: 2024_03_25_064211) do
     t.string "password_digest"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "last_login_at"
+    t.string "last_prompted_upgrade_commit_sha"
+    t.string "last_alerted_upgrade_commit_sha"
+    t.enum "role", default: "member", null: false, enum_type: "user_role"
+    t.boolean "active", default: true, null: false
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["family_id"], name: "index_users_on_family_id"
   end
 
-  create_table "valuations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.uuid "account_id", null: false
-    t.date "date", null: false
-    t.decimal "value", precision: 19, scale: 4, null: false
-    t.string "currency", default: "USD", null: false
+  create_table "vehicles", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["account_id", "date"], name: "index_valuations_on_account_id_and_date", unique: true
-    t.index ["account_id"], name: "index_valuations_on_account_id"
   end
 
   add_foreign_key "account_balances", "accounts", on_delete: :cascade
+  add_foreign_key "account_entries", "account_transfers", column: "transfer_id"
+  add_foreign_key "account_entries", "accounts"
+  add_foreign_key "account_transactions", "categories", on_delete: :nullify
+  add_foreign_key "account_transactions", "merchants"
   add_foreign_key "accounts", "families"
-  add_foreign_key "transaction_categories", "families"
-  add_foreign_key "transactions", "accounts", on_delete: :cascade
-  add_foreign_key "transactions", "transaction_categories", column: "category_id"
+  add_foreign_key "accounts", "institutions"
+  add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
+  add_foreign_key "categories", "families"
+  add_foreign_key "imports", "accounts"
+  add_foreign_key "institutions", "families"
+  add_foreign_key "merchants", "families"
+  add_foreign_key "taggings", "tags"
+  add_foreign_key "tags", "families"
   add_foreign_key "users", "families"
-  add_foreign_key "valuations", "accounts", on_delete: :cascade
 end

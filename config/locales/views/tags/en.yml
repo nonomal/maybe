@@ -1,0 +1,21 @@
+---
+en:
+  tags:
+    create:
+      created: Tag created
+    edit:
+      edit: Edit tag
+    form:
+      create: Create tag
+      update: Update
+    index:
+      empty: No tags yet
+      new: New tag
+      tags: Tags
+    new:
+      new: New tag
+    tag:
+      delete: Delete
+      edit: Edit
+    update:
+      updated: Tag updated

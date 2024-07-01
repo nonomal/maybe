@@ -1,0 +1,46 @@
+---
+en:
+  transactions:
+    bulk_delete:
+      success: "%{count} transactions deleted"
+    bulk_edit:
+      cancel: Cancel
+      category_label: Category
+      category_placeholder: Select a category
+      date_label: Date
+      details: Details
+      merchant_label: Merchant
+      merchant_placeholder: Select a merchant
+      note_label: Notes
+      note_placeholder: Enter a note that will be applied to selected transactions
+      overview: Overview
+      save: Save
+    bulk_update:
+      success: "%{count} transactions updated"
+    create:
+      success: New transaction created successfully
+    form:
+      account: Account
+      account_prompt: Select an Account
+      amount: Amount
+      category: Category
+      category_prompt: Select a Category
+      date: Date
+      description: Description
+      description_placeholder: Describe transaction
+      expense: Expense
+      income: Income
+      submit: Add transaction
+      transfer: Transfer
+    header:
+      edit_categories: Edit categories
+      edit_imports: Edit imports
+      import: Import
+    index:
+      transaction: transaction
+    mark_transfers:
+      success: Marked as transfer
+    pagination:
+      rows_per_page: Rows per page
+    unmark_transfers:
+      success: Transfer removed

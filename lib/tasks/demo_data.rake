@@ -1,10 +1,27 @@
 namespace :demo_data do
   desc "Creates or resets demo data used in development environment"
+  task reset_empty: :environment do
+    Family.all.each do |family|
+      family.destroy
+    end
+
+    family = Family.create(name: "Demo Family")
+    family.users.create! \
+      email: "user@maybe.local",
+      password: "password",
+      first_name: "Demo",
+      last_name: "User"
+  end
+
   task reset: :environment do
     family = Family.find_or_create_by(name: "Demo Family")
 
-    family.accounts.delete_all
+    family.accounts.destroy_all
     ExchangeRate.delete_all
+    family.categories.destroy_all
+    Tagging.delete_all
+    family.tags.destroy_all
+    Category.create_default_categories(family)
 
     user = User.find_or_create_by(email: "user@maybe.local") do |u|
       u.password = "password"
@@ -14,6 +31,15 @@ namespace :demo_data do
     end
 
     puts "Reset user: #{user.email} with family: #{family.name}"
+
+    # Tags
+    tags = [
+      { name: "Hawaii Trip", color: "#e99537" },
+      { name: "Trips", color: "#4da568" },
+      { name: "Emergency Fund", color: "#db5a54" }
+    ]
+
+    family.tags.insert_all(tags)
 
     # Mock exchange rates for last 60 days (these rates are reasonable for EUR:USD, but not exact)
     exchange_rates = (0..60).map do |days_ago|
@@ -46,39 +72,37 @@ namespace :demo_data do
 
     puts "Loaded mock exchange rates for last 60 days"
 
-    Transaction::Category.create_default_categories(family) if family.transaction_categories.empty?
-
     # ========== Accounts ================
-    empty_account = Account.create(name: "Demo Empty Account", family: family, accountable: Account::Depository.new, balance: 500, currency: "USD")
-    multi_currency_checking = Account.create(name: "Demo Multi-Currency Checking", family: family, accountable: Account::Depository.new, balance: 4000, currency: "EUR")
-    checking = Account.create(name: "Demo Checking", family: family, accountable: Account::Depository.new, balance: 5000, currency: "USD")
-    savings = Account.create(name: "Demo Savings", family: family, accountable: Account::Depository.new, balance: 20000, currency: "USD")
-    credit_card = Account.create(name: "Demo Credit Card", family: family, accountable: Account::Credit.new, balance: 1500, currency: "USD")
-    retirement = Account.create(name: "Demo 401k", family: family, accountable: Account::Investment.new, balance: 100000, currency: "USD")
-    euro_savings = Account.create(name: "Demo Euro Savings", family: family, accountable: Account::Depository.new, balance: 10000, currency: "EUR")
-    brokerage = Account.create(name: "Demo Brokerage Account", family: family, accountable: Account::Investment.new, balance: 10000, currency: "USD")
-    crypto = Account.create(name: "Bitcoin Account", family: family, accountable: Account::Crypto.new, balance: 0.1, currency: "BTC")
-    mortgage = Account.create(name: "Demo Mortgage", family: family, accountable: Account::Loan.new, balance: 450000, currency: "USD")
-    main_car = Account.create(name: "Demo Main Car", family: family, accountable: Account::Vehicle.new, balance: 25000, currency: "USD")
-    cash = Account.create(name: "Demo Physical Cash", family: family, accountable: Account::OtherAsset.new, balance: 500, currency: "USD")
-    car_loan = Account.create(name: "Demo Car Loan", family: family, accountable: Account::Loan.new, balance: 10000, currency: "USD")
-    house = Account.create(name: "Demo Primary Residence", family: family, accountable: Account::Property.new, balance: 2500000, currency: "USD")
-    personal_iou = Account.create(name: "Demo Personal IOU", family: family, accountable: Account::OtherLiability.new, balance: 1000, currency: "USD")
-    second_car = Account.create(name: "Demo Secondary Car", family: family, accountable: Account::Vehicle.new, balance: 12000, currency: "USD")
+    empty_account = Account.create(name: "Demo Empty Account", family: family, accountable: Depository.new, balance: 500, currency: "USD")
+    multi_currency_checking = Account.create(name: "Demo Multi-Currency Checking", family: family, accountable: Depository.new, balance: 4000, currency: "EUR")
+    checking = Account.create(name: "Demo Checking", family: family, accountable: Depository.new, balance: 5000, currency: "USD")
+    savings = Account.create(name: "Demo Savings", family: family, accountable: Depository.new, balance: 20000, currency: "USD")
+    credit_card = Account.create(name: "Demo Credit Card", family: family, accountable: CreditCard.new, balance: 1500, currency: "USD")
+    retirement = Account.create(name: "Demo 401k", family: family, accountable: Investment.new, balance: 100000, currency: "USD")
+    euro_savings = Account.create(name: "Demo Euro Savings", family: family, accountable: Depository.new, balance: 10000, currency: "EUR")
+    brokerage = Account.create(name: "Demo Brokerage Account", family: family, accountable: Investment.new, balance: 10000, currency: "USD")
+    crypto = Account.create(name: "Bitcoin Account", family: family, accountable: Crypto.new, balance: 0.1, currency: "BTC")
+    mortgage = Account.create(name: "Demo Mortgage", family: family, accountable: Loan.new, balance: 450000, currency: "USD")
+    main_car = Account.create(name: "Demo Main Car", family: family, accountable: Vehicle.new, balance: 25000, currency: "USD")
+    cash = Account.create(name: "Demo Physical Cash", family: family, accountable: OtherAsset.new, balance: 500, currency: "USD")
+    car_loan = Account.create(name: "Demo Car Loan", family: family, accountable: Loan.new, balance: 10000, currency: "USD")
+    house = Account.create(name: "Demo Primary Residence", family: family, accountable: Property.new, balance: 2500000, currency: "USD")
+    personal_iou = Account.create(name: "Demo Personal IOU", family: family, accountable: OtherLiability.new, balance: 1000, currency: "USD")
+    second_car = Account.create(name: "Demo Secondary Car", family: family, accountable: Vehicle.new, balance: 12000, currency: "USD")
 
 
     # ========== Transactions ================
     multi_currency_checking_transactions = [
-      { date: Date.today - 45, amount: 3000, name: "Paycheck", currency: "USD" },
-      { date: Date.today - 41, amount: -1500, name: "Rent Payment", currency: "EUR" },
-      { date: Date.today - 39, amount: -200, name: "Groceries", currency: "EUR" },
-      { date: Date.today - 34, amount: 3000, name: "Paycheck", currency: "USD" },
-      { date: Date.today - 31, amount: -1500, name: "Rent Payment", currency: "EUR" },
-      { date: Date.today - 28, amount: -100, name: "Utilities", currency: "EUR" },
-      { date: Date.today - 28, amount: 3000, name: "Paycheck", currency: "USD" },
-      { date: Date.today - 28, amount: -1500, name: "Rent Payment", currency: "EUR" },
-      { date: Date.today - 28, amount: -50, name: "Internet Bill", currency: "EUR" },
-      { date: Date.today - 14, amount: 3000, name: "Paycheck", currency: "USD" }
+      { date: Date.today - 45, amount: -3000, name: "Paycheck", currency: "USD" },
+      { date: Date.today - 41, amount: 1500, name: "Rent Payment", currency: "EUR" },
+      { date: Date.today - 39, amount: 200, name: "Groceries", currency: "EUR" },
+      { date: Date.today - 34, amount: -3000, name: "Paycheck", currency: "USD" },
+      { date: Date.today - 31, amount: 1500, name: "Rent Payment", currency: "EUR" },
+      { date: Date.today - 28, amount: 100, name: "Utilities", currency: "EUR" },
+      { date: Date.today - 28, amount: -3000, name: "Paycheck", currency: "USD" },
+      { date: Date.today - 28, amount: 1500, name: "Rent Payment", currency: "EUR" },
+      { date: Date.today - 28, amount: 50, name: "Internet Bill", currency: "EUR" },
+      { date: Date.today - 14, amount: -3000, name: "Paycheck", currency: "USD" }
     ]
 
     checking_transactions = [
@@ -171,24 +195,24 @@ namespace :demo_data do
     ]
 
     mortgage_transactions = [
-      { date: Date.today - 90, amount: -1500, name: "Mortgage Payment" },
-      { date: Date.today - 60, amount: -1500, name: "Mortgage Payment" },
-      { date: Date.today - 30, amount: -1500, name: "Mortgage Payment" }
+      { date: Date.today - 90, amount: 1500, name: "Mortgage Payment" },
+      { date: Date.today - 60, amount: 1500, name: "Mortgage Payment" },
+      { date: Date.today - 30, amount: 1500, name: "Mortgage Payment" }
     ]
 
     car_loan_transactions = [
-      { date: 12.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 11.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 10.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 9.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 8.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 7.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 6.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 5.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 4.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 3.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 2.months.ago.to_date, amount: -1250, name: "Car Loan Payment" },
-      { date: 1.month.ago.to_date, amount: -1250, name: "Car Loan Payment" }
+      { date: 12.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 11.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 10.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 9.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 8.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 7.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 6.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 5.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 4.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 3.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 2.months.ago.to_date, amount: 1250, name: "Car Loan Payment" },
+      { date: 1.month.ago.to_date, amount: 1250, name: "Car Loan Payment" }
     ]
 
     # ========== Valuations ================
@@ -241,25 +265,59 @@ namespace :demo_data do
       { date: 1.month.ago.to_date, value: 1000 }
     ]
 
-    # Insert valuations
-    retirement.valuations.insert_all(retirement_valuations)
-    brokerage.valuations.insert_all(brokerage_valuations)
-    crypto.valuations.insert_all(crypto_valuations)
-    mortgage.valuations.insert_all(mortgage_valuations)
-    house.valuations.insert_all(house_valuations)
-    main_car.valuations.insert_all(main_car_valuations)
-    second_car.valuations.insert_all(second_car_valuations)
-    cash.valuations.insert_all(cash_valuations)
-    personal_iou.valuations.insert_all(personal_iou_valuations)
+    accounts = [
+      [ empty_account, [], [] ],
+      [ multi_currency_checking, multi_currency_checking_transactions, [] ],
+      [ checking, checking_transactions, [] ],
+      [ savings, savings_transactions, [] ],
+      [ credit_card, credit_card_transactions, [] ],
+      [ retirement, [], retirement_valuations ],
+      [ euro_savings, euro_savings_transactions, [] ],
+      [ brokerage, [], brokerage_valuations ],
+      [ crypto, [], crypto_valuations ],
+      [ mortgage, mortgage_transactions, mortgage_valuations ],
+      [ main_car, [], main_car_valuations ],
+      [ cash, [], cash_valuations ],
+      [ car_loan, car_loan_transactions, [] ],
+      [ house, [], house_valuations ],
+      [ personal_iou, [], personal_iou_valuations ],
+      [ second_car, [], second_car_valuations ]
+    ]
 
-    # Insert transactions
-    multi_currency_checking.transactions.insert_all(multi_currency_checking_transactions)
-    checking.transactions.insert_all(checking_transactions)
-    savings.transactions.insert_all(savings_transactions)
-    euro_savings.transactions.insert_all(euro_savings_transactions)
-    credit_card.transactions.insert_all(credit_card_transactions)
-    mortgage.transactions.insert_all(mortgage_transactions)
-    car_loan.transactions.insert_all(car_loan_transactions)
+    accounts.each do |account, transactions, valuations|
+      transactions.each do |transaction|
+        account.entries.create! \
+          name: transaction[:name],
+          date: transaction[:date],
+          amount: transaction[:amount],
+          currency: transaction[:currency] || "USD",
+          entryable: Account::Transaction.new(category: family.categories.first, tags: [ Tag.first ])
+      end
+
+      valuations.each do |valuation|
+        account.entries.create! \
+          name: "Manual valuation",
+          date: valuation[:date],
+          amount: valuation[:value],
+          currency: valuation[:currency] || "USD",
+          entryable: Account::Valuation.new
+      end
+    end
+
+    # Tag a few transactions
+    emergency_fund_tag = Tag.find_by(name: "Emergency Fund")
+    trips_tag = Tag.find_by(name: "Trips")
+    hawaii_trip_tag = Tag.find_by(name: "Hawaii Trip")
+
+    savings.transactions.order(date: :desc).limit(5).each do |txn|
+      txn.tags << emergency_fund_tag
+      txn.save!
+    end
+
+    checking.transactions.order(date: :desc).limit(5).each do |txn|
+      txn.tags = [ trips_tag, hawaii_trip_tag ]
+      txn.save!
+    end
 
     puts "Created demo accounts, transactions, and valuations for family: #{family.name}"
 
