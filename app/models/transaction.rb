@@ -1,51 +1,34 @@
 class Transaction < ApplicationRecord
-  include Monetizable
+  include Entryable, Transferable, Ruleable
 
-  belongs_to :account
   belongs_to :category, optional: true
+  belongs_to :merchant, optional: true
 
-  validates :name, :date, :amount, :account, presence: true
+  has_many :taggings, as: :taggable, dependent: :destroy
+  has_many :tags, through: :taggings
 
-  after_commit :sync_account
+  accepts_nested_attributes_for :taggings, allow_destroy: true
 
-  monetize :amount
+  enum :kind, {
+    standard: "standard", # A regular transaction, included in budget analytics
+    funds_movement: "funds_movement", # Movement of funds between accounts, excluded from budget analytics
+    cc_payment: "cc_payment", # A CC payment, excluded from budget analytics (CC payments offset the sum of expense transactions)
+    loan_payment: "loan_payment", # A payment to a Loan account, treated as an expense in budgets
+    one_time: "one_time" # A one-time expense/income, excluded from budget analytics
+  }
 
-  scope :inflows, -> { where("amount > 0") }
-  scope :outflows, -> { where("amount < 0") }
-  scope :active, -> { where(excluded: false) }
-
-  def self.ransackable_attributes(auth_object = nil)
-    %w[name amount date]
+  # Overarching grouping method for all transfer-type transactions
+  def transfer?
+    funds_movement? || cc_payment? || loan_payment?
   end
 
-  def self.ransackable_associations(auth_object = nil)
-    %w[category account]
-  end
-
-  def self.build_filter_list(params, family)
-    filters = []
-
-    if params
-      params.each do |key, value|
-        next if value.blank?
-
-        case key
-        when "account_id_in"
-          value.each do |account_id|
-            filters << { type: "account", value: family.accounts.find(account_id), original: { key: key, value: account_id } }
-          end
-        when "category_name_or_account_name_or_name_cont"
-          filters << { type: "search", value: value, original: { key: key, value: nil } }
-        end
-      end
+  def set_category!(category)
+    if category.is_a?(String)
+      category = entry.account.family.categories.find_or_create_by!(
+        name: category
+      )
     end
 
-    filters
+    update!(category: category)
   end
-
-  private
-
-    def sync_account
-      self.account.sync_later
-    end
 end

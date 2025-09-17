@@ -31,24 +31,35 @@ Rails.application.configure do
   # config.action_dispatch.x_sendfile_header = "X-Accel-Redirect" # for NGINX
 
   # Store uploaded files on the local file system (see config/storage.yml for options).
-  config.active_storage.service = :local
+  config.active_storage.service = ENV.fetch("ACTIVE_STORAGE_SERVICE", "local").to_sym
+
+  # Set Active Storage URL expiration time to 7 days
+  config.active_storage.urls_expire_in = 7.days
 
   # Mount Action Cable outside main process or domain.
   # config.action_cable.mount_path = nil
   # config.action_cable.url = "wss://example.com/cable"
   # config.action_cable.allowed_request_origins = [ "http://example.com", /http:\/\/example.*/ ]
 
+  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
+  config.force_ssl = ActiveModel::Type::Boolean.new.cast(ENV.fetch("RAILS_FORCE_SSL", true))
+
   # Assume all access to the app is happening through a SSL-terminating reverse proxy.
   # Can be used together with config.force_ssl for Strict-Transport-Security and secure cookies.
-  # config.assume_ssl = true
+  config.assume_ssl = ActiveModel::Type::Boolean.new.cast(ENV.fetch("RAILS_ASSUME_SSL", true))
 
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  config.force_ssl = true
+  # Log to Logtail if API key is present, otherwise log to STDOUT
+  base_logger = if ENV["LOGTAIL_API_KEY"].present? && ENV["LOGTAIL_INGESTING_HOST"].present?
+    Logtail::Logger.create_default_logger(
+      ENV["LOGTAIL_API_KEY"],
+      ingesting_host: ENV["LOGTAIL_INGESTING_HOST"]
+    )
+  else
+    ActiveSupport::Logger.new(STDOUT)
+      .tap { |logger| logger.formatter = ::Logger::Formatter.new }
+  end
 
-  # Log to STDOUT by default
-  config.logger = ActiveSupport::Logger.new(STDOUT)
-    .tap  { |logger| logger.formatter = ::Logger::Formatter.new }
-    .then { |logger| ActiveSupport::TaggedLogging.new(logger) }
+  config.logger = ActiveSupport::TaggedLogging.new(base_logger)
 
   # Prepend all log lines with the following tags.
   config.log_tags = [ :request_id ]
@@ -58,15 +69,12 @@ Rails.application.configure do
   # want to log everything, set the level to "debug".
   config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
 
-  # Use a different cache store in production.
-  # config.cache_store = :mem_cache_store
-
-  # Use a real queuing backend for Active Job (and separate queues per environment).
-  config.active_job.queue_adapter = :good_job
-  # config.active_job.queue_name_prefix = "maybe_production"
+  if ENV["CACHE_REDIS_URL"].present?
+    config.cache_store = :redis_cache_store, { url: ENV["CACHE_REDIS_URL"] }
+  end
 
   config.action_mailer.perform_caching = false
-
+  config.action_mailer.deliver_later_queue_name = :high_priority
   config.action_mailer.default_url_options = { host: ENV["APP_DOMAIN"] }
   config.action_mailer.delivery_method = :smtp
   config.action_mailer.smtp_settings = {
@@ -74,7 +82,7 @@ Rails.application.configure do
     port:      ENV["SMTP_PORT"],
     user_name: ENV["SMTP_USERNAME"],
     password:  ENV["SMTP_PASSWORD"],
-    tls:       ENV["TLS"] == "true"
+    tls:       ENV["SMTP_TLS_ENABLED"] == "true"
   }
 
   # Ignore bad email addresses and do not raise email delivery errors.
@@ -98,4 +106,7 @@ Rails.application.configure do
   # ]
   # Skip DNS rebinding protection for the default health check endpoint.
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+
+  # set REDIS_URL for Sidekiq to use Redis
+  config.active_job.queue_adapter = :sidekiq
 end

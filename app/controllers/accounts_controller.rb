@@ -1,73 +1,73 @@
 class AccountsController < ApplicationController
-  include Filterable
-  before_action :authenticate_user!
+  before_action :set_account, only: %i[sync sparkline toggle_active show destroy]
+  include Periodable
 
-  def new
-    @account = Account.new(
-      balance: nil,
-      accountable: Accountable.from_type(params[:type])&.new
-    )
+  def index
+    @manual_accounts = family.accounts.manual.alphabetically
+    @plaid_items = family.plaid_items.ordered
+
+    render layout: "settings"
+  end
+
+  def sync_all
+    family.sync_later
+    redirect_to accounts_path, notice: "Syncing accounts..."
   end
 
   def show
-    @account = Current.family.accounts.find(params[:id])
-    @balance_series = @account.series(period: @period)
-    @valuation_series = @account.valuations.to_series
-  end
+    @chart_view = params[:chart_view] || "balance"
+    @tab = params[:tab]
+    @q = params.fetch(:q, {}).permit(:search)
+    entries = @account.entries.search(@q).reverse_chronological
 
-  def edit
-  end
+    @pagy, @entries = pagy(entries, limit: params[:per_page] || "10")
 
-  def update
-    @account = Current.family.accounts.find(params[:id])
-
-    if @account.update(account_params.except(:accountable_type))
-
-      @account.sync_later if account_params[:is_active] == "1"
-
-      respond_to do |format|
-        format.html { redirect_to accounts_path, notice: t(".success") }
-        format.turbo_stream do
-          render turbo_stream: [
-            turbo_stream.append("notification-tray", partial: "shared/notification", locals: { type: "success", content: t(".success") }),
-            turbo_stream.replace("account_#{@account.id}", partial: "accounts/account", locals: { account: @account })
-          ]
-        end
-      end
-    else
-      render "edit", status: :unprocessable_entity
-    end
-  end
-
-  def create
-    @account = Current.family.accounts.build(account_params.except(:accountable_type))
-    @account.accountable = Accountable.from_type(account_params[:accountable_type])&.new
-
-    if @account.save
-      redirect_to accounts_path, notice: t(".success")
-    else
-      render "new", status: :unprocessable_entity
-    end
+    @activity_feed_data = Account::ActivityFeedData.new(@account, @entries)
   end
 
   def sync
-    @account = Current.family.accounts.find(params[:id])
-    @account.sync_later
+    unless @account.syncing?
+      @account.sync_later
+    end
 
-    respond_to do |format|
-      format.html { redirect_to account_path(@account), notice: t(".success") }
-      format.turbo_stream do
-        render turbo_stream: [
-          turbo_stream.append("notification-tray", partial: "shared/notification", locals: { type: "success", content: t(".success") }),
-          turbo_stream.replace("sync_message", partial: "accounts/sync_message", locals: { is_syncing: true })
-        ]
-      end
+    redirect_to account_path(@account)
+  end
+
+  def sparkline
+    etag_key = @account.family.build_cache_key("#{@account.id}_sparkline", invalidate_on_data_updates: true)
+
+    # Short-circuit with 304 Not Modified when the client already has the latest version.
+    # We defer the expensive series computation until we know the content is stale.
+    if stale?(etag: etag_key, last_modified: @account.family.latest_sync_completed_at)
+      @sparkline_series = @account.sparkline_series
+      render layout: false
+    end
+  end
+
+  def toggle_active
+    if @account.active?
+      @account.disable!
+    elsif @account.disabled?
+      @account.enable!
+    end
+    redirect_to accounts_path
+  end
+
+  def destroy
+    if @account.linked?
+      redirect_to account_path(@account), alert: "Cannot delete a linked account"
+    else
+      @account.destroy_later
+      redirect_to accounts_path, notice: "Account scheduled for deletion"
     end
   end
 
   private
+    def family
+      Current.family
+    end
 
-  def account_params
-    params.require(:account).permit(:name, :accountable_type, :balance, :currency, :subtype, :is_active)
-  end
+    def set_account
+      @account = family.accounts.find(params[:id])
+    end
 end

@@ -34,17 +34,23 @@ Rails.application.configure do
   end
 
   # Store uploaded files on the local file system (see config/storage.yml for options).
-  config.active_storage.service = :local
+  config.active_storage.service = ENV.fetch("ACTIVE_STORAGE_SERVICE", "local").to_sym
+  config.after_initialize do
+    ActiveStorage::Current.url_options = { host: "localhost", port: 3000 }
+  end
+
+  # Set Active Storage URL expiration time to 7 days
+  config.active_storage.urls_expire_in = 7.days
 
   # Don't care if the mailer can't send.
   config.action_mailer.raise_delivery_errors = false
+  config.action_mailer.delivery_method = :letter_opener
 
   config.action_mailer.perform_caching = false
 
-  config.action_mailer.delivery_method = :letter_opener
   config.action_mailer.perform_deliveries = true
 
-  config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
+  config.action_mailer.default_url_options = { host: "localhost", port: ENV.fetch("PORT") { 3000 } }
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
@@ -58,15 +64,9 @@ Rails.application.configure do
   # Raise an error on page load if there are pending migrations.
   config.active_record.migration_error = :page_load
 
-  # Highlight code that triggered database queries in logs.
+  config.assets.quiet = true
   config.active_record.verbose_query_logs = true
-
-  # Highlight code that enqueued background job in logs.
   config.active_job.verbose_enqueue_logs = true
-
-  # Set Active Job queue adapter
-  config.active_job.queue_adapter = :good_job
-
 
   # Raises error for missing translations.
   # config.i18n.raise_on_missing_translations = true

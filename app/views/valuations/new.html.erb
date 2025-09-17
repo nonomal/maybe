@@ -1,9 +1,19 @@
-<div>
-  <h1 class="font-bold text-4xl">Add Valuation: <%= @account.name %></h1>
-  <%= turbo_frame_tag dom_id(Valuation.new) do %>
-    <%= form_with model: [@account, @valuation], url: account_valuations_path(@account), html: { class: "" } do |f| %>
-      <%= render 'form_row', f: f, form_icon: "plus", submit_button_text: "Add" %>
+<%= render DS::Dialog.new do |dialog| %>
+  <% dialog.with_header(title: t(".title")) %>
+  <% dialog.with_body do %>
+    <%= styled_form_with model: @entry, url: confirm_create_valuations_path, class: "space-y-4" do |form| %>
+      <%= form.hidden_field :account_id %>
+
+      <% if @error_message.present? %>
+        <%= render DS::Alert.new(message: @error_message, variant: :error) %>
+      <% end %>
+
+      <div class="space-y-3">
+        <%= form.date_field :date, label: true, required: true, value: Date.current, min: Entry.min_supported_date, max: Date.current %>
+        <%= form.money_field :amount, label: t(".amount"), required: true, disable_currency: true %>
+      </div>
+
+      <%= form.submit t(".submit") %>
     <% end %>
-    <div class="h-px bg-alpha-black-50 ml-20 mr-4"></div>
   <% end %>
-</div>
+<% end %>

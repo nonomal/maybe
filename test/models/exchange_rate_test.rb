@@ -1,42 +1,70 @@
 require "test_helper"
+require "ostruct"
 
 class ExchangeRateTest < ActiveSupport::TestCase
-  test "find rate in db" do
-    assert_equal exchange_rates(:day_29_ago_eur_to_usd),
-      ExchangeRate.find_rate_or_fetch(from: "EUR", to: "USD", date: 29.days.ago.to_date)
+  include ProviderTestHelper
+
+  setup do
+    @provider = mock
+
+    ExchangeRate.stubs(:provider).returns(@provider)
   end
 
-  test "fetch rate from provider when it's not found in db" do
-    ExchangeRate
-      .expects(:fetch_rate_from_provider)
-      .returns(ExchangeRate.new(base_currency: "USD", converted_currency: "MXN", rate: 1.0, date: Date.current))
+  test "finds rate in DB" do
+    existing_rate = exchange_rates(:one)
 
-    ExchangeRate.find_rate_or_fetch from: "USD", to: "MXN", date: Date.current
+    @provider.expects(:fetch_exchange_rate).never
+
+    assert_equal existing_rate, ExchangeRate.find_or_fetch_rate(
+                                              from: existing_rate.from_currency,
+                                              to: existing_rate.to_currency,
+                                              date: existing_rate.date
+                                            )
   end
 
-  test "provided rates are saved to the db" do
-    VCR.use_cassette "synth_exchange_rate" do
-      assert_difference "ExchangeRate.count", 1 do
-        ExchangeRate.find_rate_or_fetch from: "USD", to: "MXN", date: Date.current
-      end
+  test "fetches rate from provider without cache" do
+    ExchangeRate.delete_all
+
+    provider_response = provider_success_response(
+      OpenStruct.new(
+        from: "USD",
+        to: "EUR",
+        date: Date.current,
+        rate: 1.2
+      )
+    )
+
+    @provider.expects(:fetch_exchange_rate).returns(provider_response)
+
+    assert_no_difference "ExchangeRate.count" do
+      assert_equal 1.2, ExchangeRate.find_or_fetch_rate(from: "USD", to: "EUR", date: Date.current, cache: false).rate
     end
   end
 
-  test "retrying, then raising on provider error" do
-    Faraday.expects(:get).returns(OpenStruct.new(success?: false)).times(3)
+  test "fetches rate from provider with cache" do
+    ExchangeRate.delete_all
 
-    error = assert_raises Provider::Base::ProviderError do
-      ExchangeRate.find_rate_or_fetch from: "USD", to: "MXN", date: Date.current
+    provider_response = provider_success_response(
+      OpenStruct.new(
+        from: "USD",
+        to: "EUR",
+        date: Date.current,
+        rate: 1.2
+      )
+    )
+
+    @provider.expects(:fetch_exchange_rate).returns(provider_response)
+
+    assert_difference "ExchangeRate.count", 1 do
+      assert_equal 1.2, ExchangeRate.find_or_fetch_rate(from: "USD", to: "EUR", date: Date.current, cache: true).rate
     end
-
-    assert_match "Failed to fetch exchange rate from Provider::Synth", error.message
   end
 
-  test "retrying, then raising on network error" do
-    Faraday.expects(:get).raises(Faraday::TimeoutError).times(3)
+  test "returns nil on provider error" do
+    provider_response = provider_error_response(StandardError.new("Test error"))
 
-    assert_raises Faraday::TimeoutError do
-      ExchangeRate.find_rate_or_fetch from: "USD", to: "MXN", date: Date.current
-    end
+    @provider.expects(:fetch_exchange_rate).returns(provider_response)
+
+    assert_nil ExchangeRate.find_or_fetch_rate(from: "USD", to: "EUR", date: Date.current, cache: true)
   end
 end

@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# exit on error
 set -o errexit
 
+echo "Installing gems..."
 bundle install
-./bin/rails assets:precompile
-./bin/rails assets:clean
+
+echo "Clobbering old assets..."
+bundle exec rails assets:clobber
+
+echo "Precompiling assets for production..."
+bundle exec rails assets:precompile
+
+echo "✅ Build complete"

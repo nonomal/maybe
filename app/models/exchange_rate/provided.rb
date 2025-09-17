@@ -1,24 +1,47 @@
 module ExchangeRate::Provided
   extend ActiveSupport::Concern
-  include Providable
 
   class_methods do
-    private
-      def fetch_rate_from_provider(from:, to:, date:)
-        response = exchange_rates_provider.fetch_exchange_rate \
-          from: Money::Currency.new(from).iso_code,
-          to: Money::Currency.new(to).iso_code,
-          date: date
+    def provider
+      registry = Provider::Registry.for_concept(:exchange_rates)
+      registry.get_provider(:synth)
+    end
 
-        if response.success?
-          ExchangeRate.new \
-            base_currency: from,
-            converted_currency: to,
-            rate: response.rate,
-            date: date
-        else
-          raise response.error
-        end
+    def find_or_fetch_rate(from:, to:, date: Date.current, cache: true)
+      rate = find_by(from_currency: from, to_currency: to, date: date)
+      return rate if rate.present?
+
+      return nil unless provider.present? # No provider configured (some self-hosted apps)
+
+      response = provider.fetch_exchange_rate(from: from, to: to, date: date)
+
+      return nil unless response.success? # Provider error
+
+      rate = response.data
+      ExchangeRate.find_or_create_by!(
+        from_currency: rate.from,
+        to_currency: rate.to,
+        date: rate.date,
+        rate: rate.rate
+      ) if cache
+      rate
+    end
+
+    # @return [Integer] The number of exchange rates synced
+    def import_provider_rates(from:, to:, start_date:, end_date:, clear_cache: false)
+      unless provider.present?
+        Rails.logger.warn("No provider configured for ExchangeRate.import_provider_rates")
+        return 0
       end
+
+      ExchangeRate::Importer.new(
+        exchange_rate_provider: provider,
+        from: from,
+        to: to,
+        start_date: start_date,
+        end_date: end_date,
+        clear_cache: clear_cache
+      ).import_provider_rates
+    end
   end
 end

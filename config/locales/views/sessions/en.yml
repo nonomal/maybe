@@ -9,6 +9,7 @@ en:
       email: Email address
       email_placeholder: you@example.com
       forgot_password: Forgot your password?
-      reset_password: Reset it
+      password: Password
       submit: Log in
       title: Sign in to your account
+      password_placeholder: Enter your password

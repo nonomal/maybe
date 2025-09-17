@@ -1,88 +1,163 @@
 class Account < ApplicationRecord
-  include Syncable
-  include Monetizable
+  include AASM, Syncable, Monetizable, Chartable, Linkable, Enrichable, Anchorable, Reconcileable
 
-  validates :family, presence: true
+  validates :name, :balance, :currency, presence: true
 
-  broadcasts_refreshes
   belongs_to :family
-  has_many :balances
-  has_many :valuations
-  has_many :transactions
+  belongs_to :import, optional: true
 
-  monetize :balance
+  has_many :import_mappings, as: :mappable, dependent: :destroy, class_name: "Import::Mapping"
+  has_many :entries, dependent: :destroy
+  has_many :transactions, through: :entries, source: :entryable, source_type: "Transaction"
+  has_many :valuations, through: :entries, source: :entryable, source_type: "Valuation"
+  has_many :trades, through: :entries, source: :entryable, source_type: "Trade"
+  has_many :holdings, dependent: :destroy
+  has_many :balances, dependent: :destroy
 
-  enum :status, { ok: "ok", syncing: "syncing", error: "error" }, validate: true
+  monetize :balance, :cash_balance
 
-  scope :active, -> { where(is_active: true) }
+  enum :classification, { asset: "asset", liability: "liability" }, validate: { allow_nil: true }
+
+  scope :visible, -> { where(status: [ "draft", "active" ]) }
   scope :assets, -> { where(classification: "asset") }
   scope :liabilities, -> { where(classification: "liability") }
+  scope :alphabetically, -> { order(:name) }
+  scope :manual, -> { where(plaid_account_id: nil) }
+
+  has_one_attached :logo
 
   delegated_type :accountable, types: Accountable::TYPES, dependent: :destroy
 
-  def self.ransackable_attributes(auth_object = nil)
-    %w[name id]
+  accepts_nested_attributes_for :accountable, update_only: true
+
+  # Account state machine
+  aasm column: :status, timestamps: true do
+    state :active, initial: true
+    state :draft
+    state :disabled
+    state :pending_deletion
+
+    event :activate do
+      transitions from: [ :draft, :disabled ], to: :active
+    end
+
+    event :disable do
+      transitions from: [ :draft, :active ], to: :disabled
+    end
+
+    event :enable do
+      transitions from: :disabled, to: :active
+    end
+
+    event :mark_for_deletion do
+      transitions from: [ :draft, :active, :disabled ], to: :pending_deletion
+    end
   end
 
-  def balance_on(date)
-    balances.where("date <= ?", date).order(date: :desc).first&.balance
-  end
+  class << self
+    def create_and_sync(attributes)
+      attributes[:accountable_attributes] ||= {} # Ensure accountable is created, even if empty
+      account = new(attributes.merge(cash_balance: attributes[:balance]))
+      initial_balance = attributes.dig(:accountable_attributes, :initial_balance)&.to_d
 
-  # e.g. Wise, Revolut accounts that have transactions in multiple currencies
-  def multi_currency?
-    currencies = [ valuations.pluck(:currency), transactions.pluck(:currency) ].flatten.uniq
-    currencies.count > 1
-  end
+      transaction do
+        account.save!
 
-  # e.g. Accounts denominated in currency other than family currency
-  def foreign_currency?
-    currency != family.currency
-  end
-
-  def self.by_provider
-    # TODO: When 3rd party providers are supported, dynamically load all providers and their accounts
-    [ { name: "Manual accounts", accounts: all.order(balance: :desc).group_by(&:accountable_type) } ]
-  end
-
-  def self.some_syncing?
-    exists?(status: "syncing")
-  end
-
-
-  def series(period: Period.all, currency: self.currency)
-    balance_series = balances.in_period(period).where(currency: Money::Currency.new(currency).iso_code)
-
-    if balance_series.empty? && period.date_range.end == Date.current
-      converted_balance = balance_money.exchange_to(currency)
-      if converted_balance
-        TimeSeries.new([ { date: Date.current, value: converted_balance } ])
-      else
-        TimeSeries.new([])
+        manager = Account::OpeningBalanceManager.new(account)
+        result = manager.set_opening_balance(balance: initial_balance || account.balance)
+        raise result.error if result.error
       end
+
+      account.sync_later
+      account
+    end
+  end
+
+  def institution_domain
+    url_string = plaid_account&.plaid_item&.institution_url
+    return nil unless url_string.present?
+
+    begin
+      uri = URI.parse(url_string)
+      # Use safe navigation on .host before calling gsub
+      uri.host&.gsub(/^www\./, "")
+    rescue URI::InvalidURIError
+      # Log a warning if the URL is invalid and return nil
+      Rails.logger.warn("Invalid institution URL encountered for account #{id}: #{url_string}")
+      nil
+    end
+  end
+
+  def destroy_later
+    mark_for_deletion!
+    DestroyJob.perform_later(self)
+  end
+
+  # Override destroy to handle error recovery for accounts
+  def destroy
+    super
+  rescue => e
+    # If destruction fails, transition back to disabled state
+    # This provides a cleaner recovery path than the generic scheduled_for_deletion flag
+    disable! if may_disable?
+    raise e
+  end
+
+  def current_holdings
+    holdings.where(currency: currency)
+            .where.not(qty: 0)
+            .where(
+              id: holdings.select("DISTINCT ON (security_id) id")
+                          .where(currency: currency)
+                          .order(:security_id, date: :desc)
+            )
+            .order(amount: :desc)
+  end
+
+  def start_date
+    first_entry_date = entries.minimum(:date) || Date.current
+    first_entry_date - 1.day
+  end
+
+  def lock_saved_attributes!
+    super
+    accountable.lock_saved_attributes!
+  end
+
+  def first_valuation
+    entries.valuations.order(:date).first
+  end
+
+  def first_valuation_amount
+    first_valuation&.amount_money || balance_money
+  end
+
+  # Get short version of the subtype label
+  def short_subtype_label
+    accountable_class.short_subtype_label_for(subtype) || accountable_class.display_name
+  end
+
+  # Get long version of the subtype label
+  def long_subtype_label
+    accountable_class.long_subtype_label_for(subtype) || accountable_class.display_name
+  end
+
+  # The balance type determines which "component" of balance is being tracked.
+  # This is primarily used for balance related calculations and updates.
+  #
+  # "Cash" = "Liquid"
+  # "Non-cash" = "Illiquid"
+  # "Investment" = A mix of both, including brokerage cash (liquid) and holdings (illiquid)
+  def balance_type
+    case accountable_type
+    when "Depository", "CreditCard"
+      :cash
+    when "Property", "Vehicle", "OtherAsset", "Loan", "OtherLiability"
+      :non_cash
+    when "Investment", "Crypto"
+      :investment
     else
-      TimeSeries.from_collection(balance_series, :balance_money)
+      raise "Unknown account type: #{accountable_type}"
     end
-  end
-
-  def self.by_group(period: Period.all, currency: Money.default_currency)
-    grouped_accounts = { assets: ValueGroup.new("Assets", currency), liabilities: ValueGroup.new("Liabilities", currency) }
-
-    Accountable.by_classification.each do |classification, types|
-      types.each do |type|
-        group = grouped_accounts[classification.to_sym].add_child_group(type, currency)
-        Accountable.from_type(type).includes(:account).each do |accountable|
-          account = accountable.account
-          next unless account
-
-          value_node = group.add_value_node(
-            account,
-            account.balance_money.exchange_to(currency) || Money.new(0, currency),
-            account.series(period: period, currency: currency)
-          )
-        end
-      end
-    end
-
-    grouped_accounts
   end
 end
